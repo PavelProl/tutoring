@@ -138,11 +138,21 @@ def render_exercise(n, ex, role=None, teacher=False):
     return "\n".join(parts)
 
 
+def topic_number(root, topic_id):
+    """Find the topic's number in the course map table row `| N | `id` | ...`."""
+    m = re.search(rf"^\|\s*(\d+)\s*\|\s*`{re.escape(topic_id)}`\s*\|",
+                  (root / "course-map.md").read_text(encoding="utf-8"), re.M)
+    if not m:
+        sys.exit(f"Topic {topic_id} is not in course-map.md")
+    return m.group(1)
+
+
 def build_kit(root, kit_path, out):
     kit, plan = read_md(kit_path)
     lesson = [(item, load_exercise(root, item["id"])) for item in kit["lesson"]]
     homework = [load_exercise(root, ex_id) for ex_id in kit["homework"]["exercises"]]
-    head = (f'<div class="label">{{label}}</div><h1>{html.escape(kit["title"])}</h1>'
+    title = f'Тема {topic_number(root, kit["main_topic"])}. {kit["title"]}'
+    head = (f'<div class="label">{{label}}</div><h1>{html.escape(title)}</h1>'
             f'<div class="sub">{html.escape(kit.get("subtitle", ""))}</div>')
 
     notes = []
@@ -159,7 +169,7 @@ def build_kit(root, kit_path, out):
         rows += [render_exercise(n, ex, teacher=teacher) for n, ex in enumerate(homework, 1)]
         return "\n".join(rows)
 
-    student = head.format(label="Конспект · Химия · ОГЭ") + "\n".join(notes) + exercises(False)
+    student = head.format(label="Конспект · Химия") + "\n".join(notes) + exercises(False)
     flags = [(ex["id"], f) for ex in [e for _, e in lesson] + homework for f in ex["meta"].get("flags", [])]
     flag_html = ""
     if flags:
