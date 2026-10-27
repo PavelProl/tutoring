@@ -19,3 +19,14 @@
 
 - [`GLOSSARY.md`](GLOSSARY.md) — словарь предметной области.
 - [`docs/adr/`](docs/adr/) — принятые архитектурные решения.
+
+## Сборка PDF
+
+Нужны Python 3.9+, Google Chrome (печатает HTML в PDF), `pdftoppm` из poppler (слайды теста в PNG) и интернет (формулы KaTeX и шрифт грузятся из сети). Путь к Chrome в `tools/build_kit.py` записан под macOS.
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python tools/build_kit.py ../tutoring-content kits/oge/atom-structure-periodic-law-1/kit.md ../tutoring-content/build/atom-structure-periodic-law-1
+.venv/bin/python tools/build_kit.py ../tutoring-content tests/level-test-9.md ../tutoring-content/build/level-test-9
+```
