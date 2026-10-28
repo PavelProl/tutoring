@@ -4,8 +4,9 @@ Usage:
     python build_kit.py <content_root> kits/oge/<kit>/kit.md <out_dir>
     python build_kit.py <content_root> tests/<test>.md <out_dir>
 
-A kit gives two pages: student.html (notes, lesson exercises, homework)
-and teacher.html (plan, must_know, solutions, answers, flags).
+A kit gives three pages: student.html (notes, lesson exercises, homework),
+answers.html (the same exercises with solutions, for the student's self-check)
+and teacher.html (plan, must_know, solutions, sources, flags).
 A test gives slides.html (16:9, one question per slide, key at the end).
 """
 
@@ -125,14 +126,15 @@ body.slides {{ max-width:none; padding:0; }}
 """
 
 
-def render_exercise(n, ex, role=None, teacher=False):
+def render_exercise(n, ex, role=None, solved=False, teacher=False):
     star = ' <span class="star">★ разбираем вместе</span>' if role == "worked_example" else ""
     parts = [f'<div class="ex"><span class="num">{n}</span>{star}', ex["condition"]]
-    if teacher:
+    if solved or teacher:
         if ex["solution"]:
             parts.append(f'<div class="sol"><b>Решение.</b>{ex["solution"]}</div>')
         else:
             parts.append(f'<div class="ans">Ответ: {ex["answer"]}</div>')
+    if teacher:
         parts.append(f'<div class="src">{html.escape("; ".join(ex["meta"].get("sources", [])))} · {ex["id"]}</div>')
     parts.append("</div>")
     return "\n".join(parts)
@@ -161,26 +163,29 @@ def build_kit(root, kit_path, out):
         notes.append(f'<div class="part">Часть {i}. {html.escape(meta["title"])}</div>')
         notes.append(md(body))
 
-    def exercises(teacher):
+    def exercises(solved=False, teacher=False):
         rows = ["<h2>Задания на занятии</h2>"]
-        rows += [render_exercise(n, ex, item.get("role"), teacher) for n, (item, ex) in enumerate(lesson, 1)]
+        rows += [render_exercise(n, ex, item.get("role"), solved, teacher) for n, (item, ex) in enumerate(lesson, 1)]
         rows.append("<h2>Домашнее задание</h2>")
-        rows.append(md(kit["homework"]["reading"]))
-        rows += [render_exercise(n, ex, teacher=teacher) for n, ex in enumerate(homework, 1)]
+        if not solved:
+            rows.append(md(kit["homework"]["reading"]))
+        rows += [render_exercise(n, ex, solved=solved, teacher=teacher) for n, ex in enumerate(homework, 1)]
         return "\n".join(rows)
 
-    student = head.format(label="Конспект · Химия") + "\n".join(notes) + exercises(False)
+    student = head.format(label="Конспект · Химия") + "\n".join(notes) + exercises()
+    answers = head.format(label="Решения и ответы · Химия") + exercises(solved=True)
     flags = [(ex["id"], f) for ex in [e for _, e in lesson] + homework for f in ex["meta"].get("flags", [])]
     flag_html = ""
     if flags:
         flag_html = "<h2>Пометки к проверке</h2><ul>" + "".join(
             f'<li class="flag"><b>{i}</b>: {html.escape(f)}</li>' for i, f in flags) + "</ul>"
-    teacher = head.format(label="Для преподавателя · Комплект") + md(plan) + exercises(True) + flag_html
+    teacher = head.format(label="Для преподавателя · Комплект") + md(plan) + exercises(teacher=True) + flag_html
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "student.html").write_text(page(kit["title"], student), encoding="utf-8")
+    (out / "answers.html").write_text(page(kit["title"] + " — решения", answers), encoding="utf-8")
     (out / "teacher.html").write_text(page(kit["title"] + " — преподавателю", teacher), encoding="utf-8")
-    return [out / "student.html", out / "teacher.html"]
+    return [out / "student.html", out / "answers.html", out / "teacher.html"]
 
 
 def build_test(test_path, out):
