@@ -37,11 +37,13 @@
 
 ## Сборка PDF
 
-Нужны Python 3.9+, Google Chrome (печатает HTML в PDF), `pdftoppm` из poppler (слайды теста в PNG) и интернет (формулы KaTeX и шрифт грузятся из сети). Путь к Chrome в `tools/build_kit.py` записан под macOS.
+Нужны Python 3.9+, Google Chrome (печатает HTML в PDF) и интернет (формулы KaTeX и шрифт грузятся из сети). Путь к Chrome в `tools/build_kit.py` записан под macOS.
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python tools/build_kit.py ../tutoring-content kits/oge/atom-structure-periodic-law-1/kit.md ../tutoring-content/build/atom-structure-periodic-law-1
-.venv/bin/python tools/build_kit.py ../tutoring-content tests/level-test-9.md ../tutoring-content/build/level-test-9
+.venv/bin/python tools/build_kit.py ../tutoring-content kits/oge/basic-concepts-1/kit.md
+.venv/bin/python tools/build_kit.py ../tutoring-content tests/level-test-9.md
 ```
+
+В `tutoring-content/build/` попадают только PDF. Комплект — в `build/oge/<NN>-<id Темы>-<N>/`: «Тема 2.1 — занятие.pdf», «— решения.pdf», «— преподавателю.pdf» и, если у Комплекта есть `entry_check`, «— входная проверка.pdf» (слайды 16:9 по ДЗ этого Комплекта, проводятся в начале следующего занятия). Тест — в `build/tests/<название>.pdf`. В `theory_block` можно выбрать Разделы: `notes/basic-concepts.md#4,6-8`; Разделы с пометкой `<!-- exams: ЕГЭ -->` в Комплект ОГЭ не попадают.

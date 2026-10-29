@@ -1,19 +1,26 @@
-"""Build a lesson_kit into HTML (KaTeX + mhchem) and print it to A4 PDF.
+"""Build a lesson_kit or a test into PDFs (HTML with KaTeX + mhchem, printed by Chrome).
 
 Usage:
-    python build_kit.py <content_root> kits/oge/<kit>/kit.md <out_dir>
-    python build_kit.py <content_root> tests/<test>.md <out_dir>
+    python build_kit.py <content_root> kits/oge/<kit>/kit.md
+    python build_kit.py <content_root> tests/<test>.md
 
-A kit gives three pages: student.html (notes, lesson exercises, homework),
-answers.html (the same exercises with solutions, for the student's self-check)
-and teacher.html (plan, must_know, solutions, sources, flags).
-A test gives slides.html (16:9, one question per slide, key at the end).
+Only PDFs land in <content_root>/build; the HTML is printed from a temporary folder.
+A kit `oge/<topic>-<N>` of topic T goes to build/oge/<TT>-<topic>-<N>/:
+«Тема T.N — занятие.pdf» (notes, lesson exercises, homework), «— решения.pdf»
+(the same exercises with solutions, for the student's self-check), «— преподавателю.pdf»
+(plan, must_know, solutions, sources, flags) and, if the kit has `entry_check`,
+«— входная проверка.pdf» (16:9 slides on this kit's homework, held at the next lesson).
+A test goes to build/tests/<title>.pdf (16:9, one question per slide, key at the end).
+
+`theory_block` entries may pick sections: `notes/<id>.md#1-3` or `notes/<id>.md#4,6-8`.
+Sections marked `<!-- exams: ЕГЭ -->` are left out of kits for other exams (ADR 0007).
 """
 
 import html
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import markdown
@@ -24,6 +31,9 @@ KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
 
 MATH_RE = re.compile(r"\$\$.+?\$\$|\$[^$\n]+?\$", re.S)
 FIG_RE = re.compile(r"^!\[\]\(([^)]+\.svg)\)\s*$", re.M)
+SECTION_RE = re.compile(r"^## (\d+)\.", re.M)
+EXAMS_RE = re.compile(r"<!--\s*exams:\s*([^>]*?)\s*-->")
+EXAM_NAMES = {"OGE": "ОГЭ", "EGE": "ЕГЭ"}
 
 
 def read_md(path):
@@ -149,7 +159,43 @@ def topic_number(root, topic_id):
     return m.group(1)
 
 
-def build_kit(root, kit_path, out):
+def parse_numbers(spec):
+    """'4,6-8' -> {4, 6, 7, 8}."""
+    numbers = set()
+    for part in spec.split(","):
+        first, _, last = part.strip().partition("-")
+        numbers.update(range(int(first), int(last or first) + 1))
+    return numbers
+
+
+def notes_sections(root, entry, exam):
+    """A theory_block entry -> (notes title, Markdown of the picked sections for this exam)."""
+    path, _, spec = entry.partition("#")
+    meta, body = read_md(root / path)
+    starts = [m.start() for m in SECTION_RE.finditer(body)]
+    chunks = [body[a:b] for a, b in zip(starts, starts[1:] + [len(body)])]
+    sections = {int(SECTION_RE.match(c).group(1)): c for c in chunks}
+    wanted = parse_numbers(spec) if spec else set(sections)
+    if wanted - set(sections):
+        sys.exit(f"{entry}: no sections {sorted(wanted - set(sections))}")
+    picked = []
+    for n in sorted(wanted):
+        marker = EXAMS_RE.search(sections[n])
+        if marker and EXAM_NAMES[exam] not in marker.group(1):
+            continue
+        picked.append(sections[n])
+    return meta["title"], "\n\n".join(picked)
+
+
+def kit_label(root, kit):
+    """'Тема 2.1' and the build folder 'oge/02-basic-concepts-1' from the kit id and course map."""
+    exam_dir, name = kit["id"].split("/")
+    topic = topic_number(root, kit["main_topic"])
+    kit_n = name.rsplit("-", 1)[1]
+    return f"Тема {topic}.{kit_n}", Path(exam_dir) / f"{int(topic):02d}-{name}"
+
+
+def build_kit(root, kit_path):
     kit, plan = read_md(kit_path)
     lesson = [(item, load_exercise(root, item["id"])) for item in kit["lesson"]]
     homework = [load_exercise(root, ex_id) for ex_id in kit["homework"]["exercises"]]
@@ -158,9 +204,9 @@ def build_kit(root, kit_path, out):
             f'<div class="sub">{html.escape(kit.get("subtitle", ""))}</div>')
 
     notes = []
-    for i, note_path in enumerate(kit["theory_block"], 1):
-        meta, body = read_md(root / note_path)
-        notes.append(f'<div class="part">Часть {i}. {html.escape(meta["title"])}</div>')
+    for i, entry in enumerate(kit["theory_block"], 1):
+        notes_title, body = notes_sections(root, entry, kit["exam"])
+        notes.append(f'<div class="part">Часть {i}. {html.escape(notes_title)}</div>')
         notes.append(md(body))
 
     def exercises(solved=False, teacher=False):
@@ -181,17 +227,21 @@ def build_kit(root, kit_path, out):
             f'<li class="flag"><b>{i}</b>: {html.escape(f)}</li>' for i, f in flags) + "</ul>"
     teacher = head.format(label="Для преподавателя · Комплект") + md(plan) + exercises(teacher=True) + flag_html
 
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "student.html").write_text(page(kit["title"], student), encoding="utf-8")
-    (out / "answers.html").write_text(page(kit["title"] + " — решения", answers), encoding="utf-8")
-    (out / "teacher.html").write_text(page(kit["title"] + " — преподавателю", teacher), encoding="utf-8")
-    return [out / "student.html", out / "answers.html", out / "teacher.html"]
+    label, folder = kit_label(root, kit)
+    out = root / "build" / folder
+    pages = [(page(kit["title"], student), out / f"{label} — занятие.pdf"),
+             (page(kit["title"] + " — решения", answers), out / f"{label} — решения.pdf"),
+             (page(kit["title"] + " — преподавателю", teacher), out / f"{label} — преподавателю.pdf")]
+    if kit.get("entry_check"):
+        check, _ = build_test(root / kit["entry_check"], "Входная проверка")[0]
+        pages.append((check, out / f"{label} — входная проверка.pdf"))
+    return pages
 
 
-def build_test(test_path, out):
+def build_test(test_path, label="Тест"):
     test, _ = read_md(test_path)
     qs = test["questions"]
-    slides = [f'<section class="slide"><div class="label">Тест · Химия</div><h1>{html.escape(test["title"])}</h1>'
+    slides = [f'<section class="slide"><div class="label">{label} · Химия</div><h1>{html.escape(test["title"])}</h1>'
               f'<div class="q" style="font-size:16pt;font-weight:400">{html.escape(test["subtitle"])}</div>'
               '<div class="q" style="font-size:16pt;font-weight:400">В каждом вопросе один верный ответ. Записывай номер вопроса и номер ответа.</div></section>']
     for n, q in enumerate(qs, 1):
@@ -200,49 +250,41 @@ def build_test(test_path, out):
                       f'<div class="q">{md(q["q"], inline=True)}</div><div class="opts">{opts}</div></section>')
     key = "".join(f"<tr><td>{n}</td><td><b>{q['answer']}</b></td><td>{html.escape(q['checks'])}</td></tr>"
                   for n, q in enumerate(qs, 1))
-    scale = "".join(f"<tr><td><b>{s['range']}</b></td><td>{html.escape(s['meaning'])}</td></tr>" for s in test["scale"])
+    scale = "".join(f"<tr><td><b>{s['range']}</b></td><td>{html.escape(s['meaning'])}</td></tr>"
+                    for s in test.get("scale", []))
+    scale_table = f'<table><tr><th>Баллы</th><th>Что это значит</th></tr>{scale}</table>' if scale else ""
     slides.append('<section class="slide"><h1>Ответы</h1>'
                   f'<div style="display:flex;gap:10mm"><table><tr><th>№</th><th>Ответ</th><th>Что проверяет</th></tr>{key}</table>'
-                  f'<table><tr><th>Баллы</th><th>Что это значит</th></tr>{scale}</table></div></section>')
+                  f'{scale_table}</div></section>')
     for n, q in enumerate(qs, 1):
         if q.get("explain"):
             items = "".join(f'<li style="margin:2mm 0">{md(e, inline=True)}</li>' for e in q["explain"])
             slides.append(f'<section class="slide"><div class="label">Разбор вопроса {n}</div>'
                           f'<div class="q" style="font-size:18pt;margin:2mm 0 4mm">{md(q["q"], inline=True)}</div>'
                           f'<ul style="font-size:13.5pt;line-height:1.45;padding-left:6mm;margin:0">{items}</ul></section>')
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / "slides.html"
-    path.write_text(page(test["title"], "\n".join(slides), slides=True), encoding="utf-8")
-    return [path]
+    return [(page(test["title"], "\n".join(slides), slides=True), f'{test["title"]}.pdf')]
 
 
-def slide_images(pdf):
-    """One 1920x1080 PNG per slide, for showing slides one by one."""
-    folder = pdf.parent / "slides"
-    folder.mkdir(exist_ok=True)
-    for old in folder.glob("*.png"):
-        old.unlink()
-    subprocess.run(["pdftoppm", "-png", "-scale-to-x", "1920", "-scale-to-y", "1080",
-                    str(pdf), str(folder / "slide")], check=True)
-    return folder
-
-
-def print_pdf(html_path):
-    pdf = html_path.with_suffix(".pdf")
+def print_pdf(html_text, pdf, tmp):
+    """Print one HTML page to PDF via a temporary file; only the PDF is kept."""
+    html_path = Path(tmp) / "page.html"
+    html_path.write_text(html_text, encoding="utf-8")
+    pdf.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-                    "--virtual-time-budget=20000", f"--print-to-pdf={pdf}", html_path.resolve().as_uri()],
+                    "--virtual-time-budget=20000", f"--print-to-pdf={pdf}", html_path.as_uri()],
                    check=True, capture_output=True)
     return pdf
 
 
 def main():
-    root, src, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-    pages = build_test(root / src, out) if src.parts[0] == "tests" else build_kit(root, root / src, out)
-    for p in pages:
-        pdf = print_pdf(p)
-        print(p, "->", pdf)
-        if p.name == "slides.html":
-            print("slides one by one ->", slide_images(pdf))
+    root, src = Path(sys.argv[1]), Path(sys.argv[2])
+    if src.parts[0] == "tests":
+        pages = [(text, root / "build" / "tests" / name) for text, name in build_test(root / src)]
+    else:
+        pages = build_kit(root, root / src)
+    with tempfile.TemporaryDirectory() as tmp:
+        for text, pdf in pages:
+            print(print_pdf(text, pdf, tmp))
 
 
 if __name__ == "__main__":
