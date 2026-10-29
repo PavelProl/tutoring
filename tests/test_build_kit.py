@@ -141,6 +141,14 @@ class KitTest(unittest.TestCase):
         pages = self.c.pages(self.c.kit(["notes/a.md#4-5"], entry_check="tests/e.md"))
         self.assertIn("чтение ДЗ, Раздел 2", pages["входная проверка.pdf"])
 
+    def test_entry_check_without_checks_has_no_teacher_column(self):
+        self.c.write("notes/a.md", notes("Notes A", {4: "Four."}))
+        self.c.write("tests/e.md", "---\ntitle: T\nsubtitle: S\nquestions:\n"
+                     "  - q: Q\n    options: [a, b]\n    answer: 1\n    explain: ['Шаг. Ответ: 1.']\n---\n")
+        check = self.c.pages(self.c.kit(["notes/a.md#4"], entry_check="tests/e.md"))["входная проверка.pdf"]
+        self.assertNotIn("Что проверяет", check)
+        self.assertIn("Разбор вопроса 1", check)
+
     def test_kit_one_shape_is_unchanged(self):
         """Parts 1–3 and 1–7: renumbering keeps every number, so the output is the plain notes."""
         a = notes("Notes A", {1: "One.", 2: "Two.", 3: "Three.", 4: "Four."})
