@@ -14,6 +14,10 @@ A test goes to build/tests/<title>.pdf (16:9, one question per slide, key at the
 
 `theory_block` entries may pick sections: `notes/<id>.md#1-3` or `notes/<id>.md#4,6-8`.
 Sections marked `<!-- exams: ЕГЭ -->` are left out of kits for other exams (ADR 0007).
+
+Sources keep the notes numbering; the builder renumbers at render time. Each `theory_block`
+entry (a part) restarts at 1, and every «Раздел N» the PDF shows follows: headings, references
+inside the notes, the kit text and the attached entry check (#18).
 """
 
 import html
@@ -32,13 +36,18 @@ KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
 MATH_RE = re.compile(r"\$\$.+?\$\$|\$[^$\n]+?\$", re.S)
 FIG_RE = re.compile(r"^!\[\]\(([^)]+\.svg)\)\s*$", re.M)
 SECTION_RE = re.compile(r"^## (\d+)\.", re.M)
+REF_NUM = r"\d+(?:\s*[–-]\s*\d+)?"
+REF_RE = re.compile(rf"([Рр]аздел(?:ы|а|е|у|ом|ов|ах|ам|ами)?\s+)({REF_NUM}(?:(?:,\s*|\s+и\s+){REF_NUM})*)")
 EXAMS_RE = re.compile(r"<!--\s*exams:\s*([^>]*?)\s*-->")
 EXAM_NAMES = {"OGE": "ОГЭ", "EGE": "ЕГЭ"}
 
 
 def read_md(path):
     """Split a Markdown file into (front matter dict, body)."""
-    text = Path(path).read_text(encoding="utf-8")
+    return parse_md(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_md(text):
     if text.startswith("---"):
         _, head, body = text.split("---", 2)
         return yaml.safe_load(head) or {}, body.strip()
@@ -168,23 +177,78 @@ def parse_numbers(spec):
     return numbers
 
 
+def renumber_refs(text, mapping, where, first_line=1):
+    """Replace section numbers after «Раздел…» by mapping {old: new}; stop on a number outside it."""
+    def fix(m):
+        line = first_line + text.count("\n", 0, m.start())
+
+        def check(old):
+            if old not in mapping:
+                sys.exit(f"{where}:{line}: «{m.group(0)}» points to section {old}, which is not in this kit "
+                         f"(sections of the kit: {sorted(mapping)})")
+            return str(mapping[old])
+
+        def item(n):
+            first, last = n.group(0), None
+            ends = re.split(r"(\s*[–-]\s*)", first)
+            if len(ends) == 3:  # a range: every section inside must be in the kit
+                for old in range(int(ends[0]), int(ends[2]) + 1):
+                    check(old)
+            return "".join(check(int(e)) if e.isdigit() else e for e in ends)
+
+        return m.group(1) + re.sub(REF_NUM, item, m.group(2))
+
+    return REF_RE.sub(fix, text)
+
+
 def notes_sections(root, entry, exam):
-    """A theory_block entry -> (notes title, Markdown of the picked sections for this exam)."""
+    """A theory_block entry -> (notes title, Markdown of the picked sections renumbered from 1, {old: new})."""
     path, _, spec = entry.partition("#")
     meta, body = read_md(root / path)
+    text = (root / path).read_text(encoding="utf-8")
+    body_line = text.count("\n", 0, text.index(body)) + 1
     starts = [m.start() for m in SECTION_RE.finditer(body)]
-    chunks = [body[a:b] for a, b in zip(starts, starts[1:] + [len(body)])]
-    sections = {int(SECTION_RE.match(c).group(1)): c for c in chunks}
+    chunks = [(a, body[a:b]) for a, b in zip(starts, starts[1:] + [len(body)])]
+    sections = {int(SECTION_RE.match(c).group(1)): (a, c) for a, c in chunks}
     wanted = parse_numbers(spec) if spec else set(sections)
     if wanted - set(sections):
         sys.exit(f"{entry}: no sections {sorted(wanted - set(sections))}")
-    picked = []
+    kept = []
     for n in sorted(wanted):
-        marker = EXAMS_RE.search(sections[n])
+        offset, chunk = sections[n]
+        marker = EXAMS_RE.search(chunk)
         if marker and EXAM_NAMES[exam] not in marker.group(1):
             continue
-        picked.append(sections[n])
-    return meta["title"], "\n\n".join(picked)
+        kept.append((n, offset, chunk))
+    mapping = {n: i for i, (n, _, _) in enumerate(kept, 1)}
+    picked = []
+    for n, offset, chunk in kept:
+        first_line = body_line + body.count("\n", 0, offset)
+        chunk = SECTION_RE.sub(lambda m: f"## {mapping[n]}.", chunk, count=1)
+        picked.append(renumber_refs(chunk, mapping, path, first_line))
+    return meta["title"], "\n\n".join(picked), mapping
+
+
+def renumber_kit_text(text, mappings, where, skip=None):
+    """Renumber «Раздел N» in the kit's own text (or its entry check).
+
+    One part: its mapping. Several parts: a numeric reference is ambiguous, so it is an error,
+    but only when renumbering changes some number; otherwise the text stays as it is.
+    """
+    if all(all(old == new for old, new in m.items()) for m in mappings) and len(mappings) > 1:
+        return text
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if skip and skip(line):
+            continue
+        if len(mappings) > 1:
+            found = REF_RE.search(line)
+            if found:
+                sys.exit(f"{where}:{i + 1}: «{found.group(0)}» is ambiguous in a kit with several parts "
+                         "whose numbers change; write the section name instead of the number")
+        else:
+            lines[i] = renumber_refs(line, mappings[0], where, first_line=i + 1)
+    return "\n".join(lines)
 
 
 def kit_label(root, kit):
@@ -196,7 +260,12 @@ def kit_label(root, kit):
 
 
 def build_kit(root, kit_path):
-    kit, plan = read_md(kit_path)
+    kit_text = Path(kit_path).read_text(encoding="utf-8")
+    kit, _ = parse_md(kit_text)
+    parts = [notes_sections(root, entry, kit["exam"]) for entry in kit["theory_block"]]
+    mappings = [mapping for _, _, mapping in parts]
+    where = str(Path(kit_path).relative_to(root)) if Path(kit_path).is_relative_to(root) else str(kit_path)
+    kit, plan = parse_md(renumber_kit_text(kit_text, mappings, where))
     lesson = [(item, load_exercise(root, item["id"])) for item in kit["lesson"]]
     homework = [load_exercise(root, ex_id) for ex_id in kit["homework"]["exercises"]]
     title = f'Тема {topic_number(root, kit["main_topic"])}. {kit["title"]}'
@@ -204,8 +273,7 @@ def build_kit(root, kit_path):
             f'<div class="sub">{html.escape(kit.get("subtitle", ""))}</div>')
 
     notes = []
-    for i, entry in enumerate(kit["theory_block"], 1):
-        notes_title, body = notes_sections(root, entry, kit["exam"])
+    for i, (notes_title, body, _) in enumerate(parts, 1):
         notes.append(f'<div class="part">Часть {i}. {html.escape(notes_title)}</div>')
         notes.append(md(body))
 
@@ -233,13 +301,17 @@ def build_kit(root, kit_path):
              (page(kit["title"] + " — решения", answers), out / f"{label} — решения.pdf"),
              (page(kit["title"] + " — преподавателю", teacher), out / f"{label} — преподавателю.pdf")]
     if kit.get("entry_check"):
-        check, _ = build_test(root / kit["entry_check"], "Входная проверка")[0]
+        check, _ = build_test(root / kit["entry_check"], "Входная проверка", mappings)[0]
         pages.append((check, out / f"{label} — входная проверка.pdf"))
     return pages
 
 
-def build_test(test_path, label="Тест"):
-    test, _ = read_md(test_path)
+def build_test(test_path, label="Тест", mappings=None):
+    """`mappings` are the section maps of the kit this test is attached to; its numbers follow the kit's PDF."""
+    text = Path(test_path).read_text(encoding="utf-8")
+    if mappings:
+        text = renumber_kit_text(text, mappings, str(test_path), skip=lambda line: line.startswith("note:"))
+    test, _ = parse_md(text)
     qs = test["questions"]
     slides = [f'<section class="slide"><div class="label">{label} · Химия</div><h1>{html.escape(test["title"])}</h1>'
               f'<div class="q" style="font-size:16pt;font-weight:400">{html.escape(test["subtitle"])}</div>'
