@@ -320,13 +320,15 @@ def build_test(test_path, label="Тест", mappings=None):
         opts = "".join(f"<div><b>{k}</b>{md(o, inline=True)}</div>" for k, o in enumerate(q["options"], 1))
         slides.append(f'<section class="slide"><div class="label">Вопрос {n} из {len(qs)}</div>'
                       f'<div class="q">{md(q["q"], inline=True)}</div><div class="opts">{opts}</div></section>')
-    key = "".join(f"<tr><td>{n}</td><td><b>{q['answer']}</b></td><td>{html.escape(q['checks'])}</td></tr>"
+    with_checks = any(q.get("checks") for q in qs)  # «Что проверяет» is for the teacher; shown only if given
+    key = "".join(f"<tr><td>{n}</td><td><b>{q['answer']}</b></td>"
+                  + (f"<td>{html.escape(q.get('checks', ''))}</td>" if with_checks else "") + "</tr>"
                   for n, q in enumerate(qs, 1))
     scale = "".join(f"<tr><td><b>{s['range']}</b></td><td>{html.escape(s['meaning'])}</td></tr>"
                     for s in test.get("scale", []))
     scale_table = f'<table><tr><th>Баллы</th><th>Что это значит</th></tr>{scale}</table>' if scale else ""
     slides.append('<section class="slide"><h1>Ответы</h1>'
-                  f'<div style="display:flex;gap:10mm"><table><tr><th>№</th><th>Ответ</th><th>Что проверяет</th></tr>{key}</table>'
+                  f'<div style="display:flex;gap:10mm"><table><tr><th>№</th><th>Ответ</th>{"<th>Что проверяет</th>" if with_checks else ""}</tr>{key}</table>'
                   f'{scale_table}</div></section>')
     for n, q in enumerate(qs, 1):
         if q.get("explain"):
