@@ -13,3 +13,6 @@ __pycache__/
 
 # Личные настройки Claude Code
 .claude/settings.local.json
+
+# Temporary agent worktrees are separate repositories.
+.claude/worktrees/
