@@ -80,6 +80,15 @@ class RenumberTextTest(unittest.TestCase):
 
 
 class KitTest(unittest.TestCase):
+    def test_notes_svg_is_embedded_from_notes_directory(self):
+        (self.c.root / "notes" / "figures").mkdir()
+        self.c.write("notes/figures/bond.svg", '<svg xmlns="http://www.w3.org/2000/svg"><text>Shared pair</text></svg>')
+        self.c.write("notes/a.md", notes("Notes A", {4: "![](figures/bond.svg)"}))
+        student = self.c.pages(self.c.kit(["notes/a.md#4"]))["занятие.pdf"]
+        self.assertIn('<svg xmlns="http://www.w3.org/2000/svg">', student)
+        self.assertIn("Shared pair", student)
+        self.assertNotIn('src="figures/bond.svg"', student)
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

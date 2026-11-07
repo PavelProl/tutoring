@@ -124,7 +124,7 @@ td {{ border-bottom:1px solid var(--line); padding:1.5mm 2mm; vertical-align:top
 .star {{ font-size:8pt; font-weight:700; color:var(--accent); }}
 .sol {{ margin-top:2mm; padding:2mm 4mm; border-left:3px solid var(--line); background:#fafafa; }}
 .ans {{ margin-top:1mm; font-weight:600; }}
-.fig {{ margin:2mm 0; }}
+.fig {{ margin:2mm 0; break-inside:avoid; }}
 .flag {{ color:#9a3412; font-size:9pt; }}
 .katex {{ font-size:1.05em; }}
 body.slides {{ max-width:none; padding:0; }}
@@ -275,7 +275,8 @@ def build_kit(root, kit_path):
     notes = []
     for i, (notes_title, body, _) in enumerate(parts, 1):
         notes.append(f'<div class="part">Часть {i}. {html.escape(notes_title)}</div>')
-        notes.append(md(body))
+        notes_path = root / kit["theory_block"][i - 1].partition("#")[0]
+        notes.append(md(body, base=notes_path.parent))
 
     def exercises(solved=False, teacher=False):
         rows = ["<h2>Задания на занятии</h2>"]
