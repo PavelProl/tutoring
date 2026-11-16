@@ -10,3 +10,9 @@ __pycache__/
 
 # Секреты (ключи API)
 .env
+
+# Личные настройки Claude Code
+.claude/settings.local.json
+
+# Temporary agent worktrees are separate repositories.
+.claude/worktrees/
