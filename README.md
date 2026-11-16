@@ -78,7 +78,7 @@ python3 -m venv .venv
 
 ### Новый Комплект: два PDF
 
-Исходник явно содержит `format_version: 2`, `id: school/<topic-kit>` (или oge/ege для экзамена), `main_topic` из карты, `title`, `theory_block`, `lesson`, `homework` и непустой `practice`. Списки lesson/practice принимают ID или `{id: ..., role: worked_example}`; homework содержит reading и exercises. У каждого включённого Задания нужны условие, краткий Ответ и подробное Решение. Количество practice не ограничено числом 10–15. Школьный фильтр по умолчанию исключает Разделы с пометкой только ЕГЭ; для иной цели явно указывается exam: OGE или EGE.
+Исходник явно содержит `format_version: 2`, `id: school/<topic-kit>` (или oge/ege для экзамена), `main_topic` из карты, `title`, `theory_block`, `lesson`, `homework` и непустой `practice`. Списки lesson/practice принимают ID или `{id: ..., role: worked_example}`; homework содержит exercises и необязательное reading. У каждого включённого Задания нужны условие, Ответ и подробное Решение. В PDF занятия попадают только условия; Ответы и Решения — в отдельный PDF. Количество practice не ограничено числом 10–15. Школьный фильтр по умолчанию исключает Разделы с пометкой только ЕГЭ; для иной цели явно указывается exam: OGE или EGE.
 
 Прямая сборка через build_kit.py сохраняет «Занятие.pdf» и «Решения.pdf» в build/<вариант>/<topic-kit>/. Для выдачи используй stage, подставив ID подготовленного Комплекта:
 
