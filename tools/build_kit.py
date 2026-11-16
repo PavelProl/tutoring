@@ -39,7 +39,7 @@ SECTION_RE = re.compile(r"^## (\d+)\.", re.M)
 REF_NUM = r"\d+(?:\s*[–-]\s*\d+)?"
 REF_RE = re.compile(rf"([Рр]аздел(?:ы|а|е|у|ом|ов|ах|ам|ами)?\s+)({REF_NUM}(?:(?:,\s*|\s+и\s+){REF_NUM})*)")
 EXAMS_RE = re.compile(r"<!--\s*exams:\s*([^>]*?)\s*-->")
-EXAM_NAMES = {"OGE": "ОГЭ", "EGE": "ЕГЭ"}
+EXAM_NAMES = {"OGE": "ОГЭ", "EGE": "ЕГЭ", "SCHOOL": "Школа"}
 
 
 def read_md(path):
@@ -259,9 +259,14 @@ def kit_label(root, kit):
     return f"Тема {topic}.{kit_n}", Path(exam_dir) / f"{int(topic):02d}-{name}"
 
 
-def build_kit(root, kit_path):
+def build_kit(root, kit_path, *, review_requested=False):
     kit_text = Path(kit_path).read_text(encoding="utf-8")
     kit, _ = parse_md(kit_text)
+    version = kit.get("format_version", 1)
+    if version == 2:
+        return build_modern_kit(root, kit_path, review_requested=review_requested)
+    if version != 1:
+        raise ValueError(f"{kit_path}: unsupported format_version {version}")
     parts = [notes_sections(root, entry, kit["exam"]) for entry in kit["theory_block"]]
     mappings = [mapping for _, _, mapping in parts]
     where = str(Path(kit_path).relative_to(root)) if Path(kit_path).is_relative_to(root) else str(kit_path)
@@ -305,6 +310,100 @@ def build_kit(root, kit_path):
         check, _ = build_test(root / kit["entry_check"], "Входная проверка", mappings)[0]
         pages.append((check, out / f"{label} — входная проверка.pdf"))
     return pages
+
+
+def modern_identity(kit):
+    """Validate all path components before building or publishing a v2 pair."""
+    identity = kit.get("id", "")
+    if not isinstance(identity, str) or not re.fullmatch(r"(?:school|oge|ege)/[a-z0-9][a-z0-9-]*", identity):
+        raise ValueError("v2 id must be <school|oge|ege>/<lowercase-slug>")
+    kind = kit.get("kind", "lesson")
+    if kind not in ("lesson", "review"):
+        raise ValueError("v2 kind must be lesson or review")
+    variant, slug = identity.split("/")
+    return Path(variant) / (Path("Повторение") / slug if kind == "review" else Path(slug))
+
+
+def build_modern_kit(root, kit_path, *, review_requested=False):
+    kit, _ = read_md(kit_path)
+    folder = modern_identity(kit)
+    review = kit.get("kind", "lesson") == "review"
+    if any(key in kit for key in ("entry_check", "spare")):
+        raise ValueError("v2 has no entry_check or teacher-only spare block")
+    topics = kit.get("review_topics")
+    if review and (not review_requested or not isinstance(topics, list) or not topics
+                   or not all(isinstance(topic, str) and topic for topic in topics)):
+        raise ValueError("review needs an explicit request and selected review_topics")
+    if review:
+        for topic in topics:
+            topic_number(root, topic)
+    elif not kit.get("main_topic"):
+        raise ValueError("lesson needs main_topic")
+    else:
+        topic_number(root, kit["main_topic"])
+    exam = kit.get("exam", "SCHOOL")
+    if exam not in EXAM_NAMES:
+        raise ValueError(f"unsupported exam/depth filter: {exam}")
+    parts = [] if review else [notes_sections(root, entry, exam) for entry in kit.get("theory_block", [])]
+    if not review and not parts:
+        raise ValueError("lesson needs a theory_block")
+    mappings = [mapping for _, _, mapping in parts]
+    reading = kit.get("homework", {}).get("reading", "")
+    if mappings:
+        reading = renumber_kit_text(reading, mappings, str(kit_path))
+    blocks = [("Повторение", kit.get("exercises", []))] if review else [
+        ("Задания", kit.get("lesson", [])),
+        ("Домашнее задание", kit.get("homework", {}).get("exercises", [])),
+        ("Дополнительная практика", kit.get("practice", [])),
+    ]
+    loaded = []
+    for heading, items in blocks:
+        if not isinstance(items, list) or not items:
+            raise ValueError(f"{heading}: needs a nonempty exercise list")
+        rows = []
+        seen = set()
+        for item in items:
+            selection = {"id": item} if isinstance(item, str) else item
+            ex_id = selection.get("id", "")
+            if not re.fullmatch(r"[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+", ex_id):
+                raise ValueError(f"invalid exercise id: {ex_id}")
+            if ex_id in seen:
+                raise ValueError(f"{heading}: duplicate exercise {ex_id}")
+            seen.add(ex_id)
+            ex = load_exercise(root, ex_id)
+            if not ex["condition"].strip() or not ex["answer"].strip() or not ex["solution"].strip():
+                raise ValueError(f"{ex_id}: v2 requires condition, answer and detailed solution")
+            if review and ex["meta"].get("main_topic") not in kit["review_topics"]:
+                raise ValueError(f"{ex_id}: not in selected review_topics")
+            rows.append((selection, ex))
+        loaded.append((heading, rows))
+    title = html.escape(kit["title"])
+    head = f'<div class="label">Химия</div><h1>{title}</h1>'
+    theory = []
+    for entry, (notes_title, text, _) in zip(kit.get("theory_block", []), parts):
+        theory.append(f'<div class="part">{html.escape(notes_title)}</div>')
+        theory.append(md(text, base=(root / entry.partition("#")[0]).parent))
+    student, solutions = [head] + theory, [head, '<p class="sub">Подробные Решения</p>']
+    for heading, rows in loaded:
+        student.append(f"<h2>{heading}</h2>")
+        solutions.append(f"<h2>{heading}</h2>")
+        if heading == "Домашнее задание" and reading:
+            student.append(md(reading))
+        for n, (selection, ex) in enumerate(rows, 1):
+            worked = selection.get("role") == "worked_example"
+            if worked:
+                student.append('<div class="star">Разобранный пример</div>')
+            student.append(render_exercise(n, ex, solved=worked))
+            solutions.append(render_exercise(n, ex, solved=True))
+        if heading in ("Дополнительная практика", "Повторение"):
+            student.append('<h3>Краткие Ответы</h3><ol class="brief-answers">' + "".join(
+                f'<li>{ex["answer"]}</li>' for _, ex in rows) + '</ol>')
+    def modern_page(body):
+        text = page(kit["title"], "\n".join(body))
+        return text.replace("</style>", "body {font-size:13pt} table {font-size:12pt} th {font-size:10pt} "
+                            "h3 {font-size:13pt} .ex {break-inside:auto} .num {break-after:avoid}</style>")
+    out = root / "build" / folder
+    return [(modern_page(student), out / "Занятие.pdf"), (modern_page(solutions), out / "Решения.pdf")]
 
 
 def build_test(test_path, label="Тест", mappings=None):
@@ -352,11 +451,17 @@ def print_pdf(html_text, pdf, tmp):
 
 
 def main():
-    root, src = Path(sys.argv[1]), Path(sys.argv[2])
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("content_root", type=Path)
+    parser.add_argument("source", type=Path)
+    parser.add_argument("--review-requested", action="store_true", help="build an explicitly requested v2 review selection")
+    args = parser.parse_args()
+    root, src = args.content_root.resolve(), args.source
     if src.parts[0] == "tests":
         pages = [(text, root / "build" / "tests" / name) for text, name in build_test(root / src)]
     else:
-        pages = build_kit(root, root / src)
+        pages = build_kit(root, root / src, review_requested=args.review_requested)
     with tempfile.TemporaryDirectory() as tmp:
         for text, pdf in pages:
             print(print_pdf(text, pdf, tmp))
