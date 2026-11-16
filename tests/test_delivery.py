@@ -60,22 +60,23 @@ class DeliveryTest(unittest.TestCase):
         with patch.object(deliver_kit, "print_pdf", side_effect=self.fake_print):
             return deliver_kit.stage(self.root, self.source(), self.workspace)
 
-    def test_school_pair_has_practice_answers_and_all_solutions(self):
+    def test_school_pair_has_conditions_only_and_all_solutions_separately(self):
         pages = self.pages()
         self.assertEqual([p.name for _, p in pages], list(deliver_kit.NAMES))
         student, solutions = (text for text, _ in pages)
         self.assertIn('<h2>Задания</h2>', student)
-        self.assertIn('font-size:13pt', student)
+        self.assertIn('font-size:10.5pt', student)
         self.assertIn('Раздел 1.', student)
         self.assertNotIn('Advanced text', student)
         self.assertNotIn('ОГЭ', student)
         self.assertNotIn('Для преподавателя', student)
-        self.assertIn('SOLUTION1', student)
+        self.assertNotIn('SOLUTION1', student)
         self.assertNotIn('SOLUTION2', student)
         practice = student[student.index('<h2>Дополнительная практика</h2>'):]
-        self.assertLess(practice.index('CONDITION5'), practice.index('Краткие Ответы'))
+        self.assertIn('CONDITION5', practice)
+        self.assertNotIn('Краткие Ответы', practice)
         for n in [4, 5]:
-            self.assertIn(f'ANSWER{n}', practice)
+            self.assertNotIn(f'ANSWER{n}', practice)
             self.assertNotIn(f'SOLUTION{n}', practice)
         for n in range(1, 6):
             self.assertIn(f'CONDITION{n}', solutions)
@@ -117,7 +118,7 @@ class DeliveryTest(unittest.TestCase):
             self.pages(review_requested=True)
         self.exercise(1, topic='earlier')
         pages = self.pages(review_requested=True)
-        self.assertIn('Краткие Ответы', pages[0][0])
+        self.assertNotIn('Краткие Ответы', pages[0][0])
         self.assertIn('SOLUTION1', pages[1][0])
         self.assertIn('Повторение', str(pages[0][1]))
 

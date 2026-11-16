@@ -390,17 +390,11 @@ def build_modern_kit(root, kit_path, *, review_requested=False):
         if heading == "Домашнее задание" and reading:
             student.append(md(reading))
         for n, (selection, ex) in enumerate(rows, 1):
-            worked = selection.get("role") == "worked_example"
-            if worked:
-                student.append('<div class="star">Разобранный пример</div>')
-            student.append(render_exercise(n, ex, solved=worked))
+            student.append(render_exercise(n, ex))
             solutions.append(render_exercise(n, ex, solved=True))
-        if heading in ("Дополнительная практика", "Повторение"):
-            student.append('<h3>Краткие Ответы</h3><ol class="brief-answers">' + "".join(
-                f'<li>{ex["answer"]}</li>' for _, ex in rows) + '</ol>')
     def modern_page(body):
         text = page(kit["title"], "\n".join(body))
-        return text.replace("</style>", "body {font-size:13pt} table {font-size:12pt} th {font-size:10pt} "
+        return text.replace("</style>", "body {font-size:10.5pt;line-height:1.42} h1 {font-size:18pt} h2 {font-size:13pt} table {font-size:10pt} th {font-size:9pt} "
                             "h3 {font-size:13pt} .ex {break-inside:auto} .num {break-after:avoid}</style>")
     out = root / "build" / folder
     return [(modern_page(student), out / "Занятие.pdf"), (modern_page(solutions), out / "Решения.pdf")]
