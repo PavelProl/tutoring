@@ -48,6 +48,8 @@
 
 ## Документация
 
+- [`docs/plan.md`](docs/plan.md) — с чего начать, очередность ближайшей поставки и ссылки на будущие issues.
+
 - [`docs/workflow.md`](docs/workflow.md) — где хранятся правила, работа с GitHub и завершение issue.
 - [`docs/lesson-output.md`](docs/lesson-output.md) — согласованная выдача двух PDF; реализация сборщика ещё предстоит.
 - [`GLOSSARY.md`](GLOSSARY.md) — словарь предметной области.
